@@ -1,0 +1,387 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <locale.h>
+
+#define MAX_QUARTOS 5 // Número máximo de quartos de hotel
+#define MAX_HISTORICO 5 // Número máximo de registros de check-ins no histórico
+#define MAX_FILA 5 // Tamanho máximo da fila de check-in
+#define MAX_ESPERA 5 // Tamanho máximo da fila de espera 
+
+// Estrutura para lista encadeada simples (Reservas de quartos)
+typedef struct Reserva {
+    char nome[50]; // Nome do hóspede que fez a reserva
+    int quarto; // Número do quarto reservado
+    struct Reserva *prox; // Ponteiro para a próxima reserva na lista
+} Reserva;
+
+// Estrutura para lista duplamente encadeada (Hóspedes) Juan vai usar isso aqui
+typedef struct Hospede {
+    char nome[50]; // Nome do hóspede
+    int quarto; // Número do quarto ocupado
+    struct Hospede *prev, *next; // ponteiros para o hóspede anterior e posterior
+} Hospede;
+
+// Estrutura para lista encadeada circular (Check-in)
+typedef struct ListaCircular {
+    char nome[50];  // Nome do hóspede
+    int quarto;     // Número do quarto do hóspede
+    struct ListaCircular *prox;  // Ponteiro para o próximo hóspede na lista
+} ListaCircular;
+
+// Estrutura para pilha simples (Histórico de check-ins) Samyr vai usar isso aqui 
+typedef struct PilhaCheckin {
+    char nomes[MAX_HISTORICO][50]; // Vetor de nomes dos hóspedes
+    int topo; // Índice do topo da pilha
+} PilhaCheckin;
+
+// Estrutura para fila circular (Lista de espera) Neto vai usar isso aqui
+typedef struct FilaEspera {
+    char nomes[MAX_ESPERA][50]; // Vetor de nomes dos hóspedes
+    int inicio, fim, tamanho; // índice do ínicio e fim da fila, e a quantidade de hóspedes na lista de espera
+} FilaEspera;
+
+void adicionarHospede(Hospede *novoHospede); 
+void removerHospede(Hospede *atual);   
+void mostrarHistorico();
+void adicionarAoHistorico(char nome[50]);
+void processarFilaEspera();
+void adicionarAFilaEspera(char nome [50]);
+
+Reserva *reservas = NULL; // Ponteiro para o início da lista de reservas
+Hospede *hospedes = NULL; // Ponteiro para o início da lista de hóspedes
+ListaCircular *checkinLista = NULL;  // Ponteiro para o início da lista circular
+PilhaCheckin pilhaCheckin; //Instância da pilha de histórico
+FilaEspera filaEspera; //Instância da fila de espera
+int quartosDisponiveis[MAX_QUARTOS]; // Vetor que armazena a disponibilidade dos quartos, onde 1 significa disponível e 0 significa reservado.
+
+void inicializaEstruturas() { // Inicializa as estruturas de dados. As filas e a pilha começam vazias. E todos os quartos são definidos como disponíveis
+    filaEspera.inicio = filaEspera.fim = filaEspera.tamanho = 0;
+    pilhaCheckin.topo = -1;
+    for (int i = 0; i < MAX_QUARTOS; i++) {
+        quartosDisponiveis[i] = 1; // 1 significa disponível, 0 significa reservado
+    }
+}
+
+// Função para adicionar reserva (Lista Encadeada Simples)
+void reservarQuarto(char nome[50]) {
+    int quarto = -1;
+    for (int i = 0; i < MAX_QUARTOS; i++) {
+        if (quartosDisponiveis[i] == 1) {
+            quarto = i + 1;  // Quartos são numerados de 1 a MAX_ROOMS
+            quartosDisponiveis[i] = 0;
+            break;
+        }
+    }
+
+    if (quarto == -1) {
+        printf("Todos os quartos estão ocupados. %s será adicionado à fila de espera.\n", nome);
+        adicionarAFilaEspera(nome);
+        return;
+    }
+
+    // Adiciona à lista de reservas
+    Reserva *novaReserva = (Reserva *)malloc(sizeof(Reserva));
+    strcpy(novaReserva->nome, nome);
+    novaReserva->quarto = quarto;
+    novaReserva->prox = reservas;
+    reservas = novaReserva;
+
+    printf("Reserva feita para %s no quarto %d.\n", nome, quarto);
+}
+
+void mostrarQuartos() {
+    printf("Quartos disponíveis:\n");
+    for (int i = 0; i < MAX_QUARTOS; i++) {
+        if (quartosDisponiveis[i] == 1) {
+            printf("Quarto %d: Disponível\n", i + 1);
+        } else {
+            printf("Quarto %d: Ocupado\n", i + 1);
+        }
+    }
+}
+
+void fazerCheckin(char nome[50], Hospede *novoHospede) {
+    // Verifica se o hóspede tem uma reserva
+    Reserva *reservaAtual = reservas;
+    int quartoReservado = -1;
+
+    while (reservaAtual != NULL) {
+        if (strcmp(reservaAtual->nome, nome) == 0) {
+            quartoReservado = reservaAtual->quarto;
+            break;
+        }
+        reservaAtual = reservaAtual->prox;
+    }
+
+    if (quartoReservado == -1) {
+        printf("Reserva não encontrada para %s.\n", nome);
+        return;
+    }
+
+    // Atualiza o quarto do hóspede e remove a reserva
+    novoHospede->quarto = quartoReservado;
+    adicionarHospede(novoHospede);
+    adicionarAoHistorico(nome);
+
+    // Adiciona à lista circular
+    ListaCircular *novo = (ListaCircular *)malloc(sizeof(ListaCircular));
+    strcpy(novo->nome, nome);
+    novo->quarto = quartoReservado;
+
+    if (checkinLista == NULL) {
+        novo->prox = novo;  // Se for o primeiro hóspede, ele aponta para si mesmo
+        checkinLista = novo;
+    } else {
+        ListaCircular *temp = checkinLista;
+        while (temp->prox != checkinLista) {
+            temp = temp->prox;
+        }
+        temp->prox = novo;
+        novo->prox = checkinLista;  // O último hóspede aponta para o início
+    }
+
+    printf("%s fez check-in no quarto %d.\n", nome, quartoReservado);
+}
+
+
+void fazerCheckout(char nome[50]) {
+    if (checkinLista == NULL) {
+        printf("Nenhum hóspede fez check-in ainda.\n");
+        return;
+    }
+
+    ListaCircular *atual = checkinLista, *anterior = NULL;
+
+    // Verifica se o hóspede está no início da lista
+    if (strcmp(atual->nome, nome) == 0) {
+        anterior = checkinLista;
+        while (anterior->prox != checkinLista) {
+            anterior = anterior->prox;
+        }
+
+        if (atual == atual->prox) {
+            checkinLista = NULL;  // Só havia um hóspede na lista
+        } else {
+            anterior->prox = atual->prox;
+            checkinLista = atual->prox;
+        }
+
+        quartosDisponiveis[atual->quarto - 1] = 1;  // Libera o quarto
+        removerHospede(hospedes);  // Remove o hóspede da lista de hóspedes
+        free(atual);
+        printf("%s fez check-out e liberou o quarto %d.\n", nome, atual->quarto);
+        processarFilaEspera();
+        return;
+    }
+
+    // Busca o hóspede na lista circular
+    do {
+        anterior = atual;
+        atual = atual->prox;
+        if (strcmp(atual->nome, nome) == 0) {
+            anterior->prox = atual->prox;
+            quartosDisponiveis[atual->quarto - 1] = 1;  // Libera o quarto
+            removerHospede(hospedes);  // Remove o hóspede da lista de hóspedes
+            free(atual);
+            printf("%s fez check-out e liberou o quarto %d.\n", nome, atual->quarto);
+            return;
+        }
+    } while (atual != checkinLista);
+
+    printf("Hóspede %s não encontrado para check-out.\n", nome);
+}
+
+void adicionarHospede(Hospede *novoHospede) {
+    novoHospede->prev = NULL;
+    novoHospede->next = hospedes;
+    if (hospedes != NULL) hospedes->prev = novoHospede;
+    hospedes = novoHospede;
+}
+
+
+void removerHospede(Hospede *atual) {
+    if (atual->prev != NULL) {
+        atual->prev->next = atual->next;
+    } else {
+        hospedes = atual->next;
+    }
+    if (atual->next != NULL) {
+        atual->next->prev = atual->prev;
+    }
+    free(atual);   
+}
+
+void adicionarAoHistorico(char nome[50]) {
+    // Adiciona o nome ao histórico
+    if (pilhaCheckin.topo < MAX_HISTORICO - 1) {
+        pilhaCheckin.topo++;
+        strcpy(pilhaCheckin.nomes[pilhaCheckin.topo], nome);
+    } else {
+        printf("Histórico cheio, último check-in removido.\n");
+        for (int i = 0; i < MAX_HISTORICO - 1; i++) {
+            strcpy(pilhaCheckin.nomes[i], pilhaCheckin.nomes[i + 1]);
+        }
+        strcpy(pilhaCheckin.nomes[MAX_HISTORICO - 1], nome);
+    }
+}
+
+void mostrarHistorico() {
+    printf("Histórico de Check-ins:\n");
+    if (pilhaCheckin.topo < 0) {
+        printf("Nenhum check-in registrado.\n");
+        return;
+    }
+
+    for (int i = pilhaCheckin.topo; i >= 0; i--) {
+        printf("%s\n", pilhaCheckin.nomes[i]);
+    }
+}
+
+// Função para adicionar hóspede à fila de espera (Fila Circular)
+void adicionarAFilaEspera(char nome[50]) {
+    if (filaEspera.tamanho == MAX_ESPERA) {
+        printf("A fila de espera está cheia. %s não pode ser adicionado à fila.\n", nome);
+        return;
+    }
+
+    strcpy(filaEspera.nomes[filaEspera.fim], nome);
+    filaEspera.fim = (filaEspera.fim + 1) % MAX_ESPERA;
+    filaEspera.tamanho++;
+    printf("%s foi adicionado à fila de espera.\n", nome);
+}
+
+// Função para atribuir quartos para hóspedes na fila de espera quando um quarto é liberado
+void processarFilaEspera() {
+    if (filaEspera.tamanho == 0) {
+        printf("Não há hóspedes na fila de espera.\n");
+        return;
+    }
+
+    for (int i = 0; i < MAX_QUARTOS; i++) {
+        if (quartosDisponiveis[i] == 1 && filaEspera.tamanho > 0) {
+            // Atribui o quarto ao próximo hóspede da fila de espera
+            char nome[50];
+            strcpy(nome, filaEspera.nomes[filaEspera.inicio]);
+            filaEspera.inicio = (filaEspera.inicio + 1) % MAX_ESPERA;
+            filaEspera.tamanho--;
+
+            quartosDisponiveis[i] = 0;  // Marca o quarto como ocupado
+            printf("%s foi retirado da fila de espera e atribuído ao quarto %d.\n", nome, i + 1);
+
+            // Adiciona à lista de reservas, como se o hóspede tivesse feito uma reserva
+            Reserva *novaReserva = (Reserva *)malloc(sizeof(Reserva));
+            strcpy(novaReserva->nome, nome);
+            novaReserva->quarto = i + 1;
+            novaReserva->prox = reservas;
+            reservas = novaReserva;
+
+            // Agora, o hóspede pode fazer o check-in
+            Hospede *novoHospede = (Hospede *)malloc(sizeof(Hospede));
+            strcpy(novoHospede->nome, nome);
+            novoHospede->quarto = i + 1;
+            adicionarHospede(novoHospede);
+            adicionarAoHistorico(nome);
+
+            // Adiciona o hóspede à lista circular de check-ins
+            ListaCircular *novoCheckin = (ListaCircular *)malloc(sizeof(ListaCircular));
+            strcpy(novoCheckin->nome, nome);
+            novoCheckin->quarto = i + 1;
+
+            if (checkinLista == NULL) {
+                novoCheckin->prox = novoCheckin;
+                checkinLista = novoCheckin;
+            } else {
+                ListaCircular *temp = checkinLista;
+                while (temp->prox != checkinLista) {
+                    temp = temp->prox;
+                }
+                temp->prox = novoCheckin;
+                novoCheckin->prox = checkinLista;
+            }
+            printf("%s fez check-in no quarto %d diretamente da fila de espera.\n", nome, i + 1);
+        }
+    }
+}
+
+void mostrarFilaEspera() {
+    if (filaEspera.tamanho == 0) {
+        printf("Não há hóspedes na fila de espera.\n");
+        return;
+    }
+
+    printf("Hóspedes na fila de espera:\n");
+    int i = filaEspera.inicio;
+    for (int count = 0; count < filaEspera.tamanho; count++) {
+        printf("%s\n", filaEspera.nomes[i]);
+        i = (i + 1) % MAX_ESPERA; // Move para o próximo índice circular
+    }
+}
+
+
+int main() {
+    setlocale(LC_ALL, "");
+
+    inicializaEstruturas();
+    int opcao;
+    char nome[50];
+
+    do {
+        printf("\nMenu:\n");
+        printf("1. Reservar Quarto\n");
+        printf("2. Fazer Check-in\n");
+        printf("3. Fazer Check-Out\n");
+        printf("4. Mostrar Histórico de Check-In\n");
+        printf("5. Mostrar Quartos Disponíveis\n");
+        printf("6. Mostrar Fila de espera\n");
+        printf("7. Sair\n");
+        printf("Escolha uma opção: ");
+        scanf("%d", &opcao);
+        getchar();
+
+        switch (opcao) {
+            case 1:
+                printf("Digite o nome do hóspede: ");
+                fgets(nome, sizeof(nome), stdin);
+                nome[strcspn(nome, "\n")] = 0;
+                reservarQuarto(nome);
+                break;
+            case 2:
+                printf("Digite o nome do hóspede: ");
+                fgets(nome, sizeof(nome), stdin);
+                nome[strcspn(nome, "\n")] = 0;
+
+                Hospede *novoHospede = (Hospede *)malloc(sizeof(Hospede));
+                if (novoHospede == NULL) {
+                printf("Erro de alocação de memória para o novo hóspede.\n");
+                }
+                strcpy(novoHospede->nome, nome);
+                novoHospede->quarto = -1;  
+                fazerCheckin(nome, novoHospede);
+                break;
+            case 3:
+                printf("Digite o nome do hóspede: ");
+                fgets(nome, sizeof(nome), stdin);
+                nome[strcspn(nome, "\n")] = 0;
+                fazerCheckout(nome);
+                break;
+            case 4:
+                mostrarHistorico(nome);
+                break;
+            case 5:
+                mostrarQuartos();
+                break;
+            case 6:
+                mostrarFilaEspera();
+                break;
+            case 7:
+                printf("Saindo...\n");
+                break;
+            default:
+                printf("Opção inválida.\n");
+                break;
+        }
+    } while (opcao != 7);
+
+    return 0;
+}
